@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Harmonic Tone Analyzer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .top-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .bottom-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .chart-container {
+            height: 300px;
+            margin-bottom: 20px;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+            justify-content: center;
+        }
+        .harmonic-control {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 8px;
+            min-width: 70px;
+        }
+        .harmonic-label {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .freq-label {
+            font-size: 10px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .slider {
+            width: 35px;
+            height: 150px;
+            -webkit-appearance: slider-vertical;
+            appearance: slider-vertical;
+            background: linear-gradient(to top, #ddd 0%, #ddd 100%);
+            outline: none;
+            margin: 8px 0;
+        }
+        
+        /* Firefox vertical slider */
+        @-moz-document url-prefix() {
+            .slider {
+                transform: rotate(-90deg);
+                width: 200px;
+                height: 40px;
+                margin: 80px 0;
+            }
+        }
+        .value-display {
+            font-size: 14px;
+            text-align: center;
+            margin-top: 10px;
+            line-height: 1.2;
+        }
+        .phase-display {
+            font-size: 14px;
+            color: #2020d0;
+            margin-top: 5px;
+        }
+        .buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .btn {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .btn-play { background: #2d8a2f; color: white; }
+        .btn-stop { background: #d32f2f; color: white; }
+        .btn-reset { background: #f57c00; color: white; }
+        .btn-phase { background: #8e24aa; color: white; }
+        .btn-preset { background: #1976d2; color: white; }
+        .presets {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        h1, h2 {
+            margin-top: 0;
+        }
+        @media (max-width: 768px) {
+            .harmonic-control {
+                min-width: 60px;
+                padding: 6px;
+            }
+            .slider {
+                width: 30px;
+                height: 120px;
+                margin: 6px 0;
+            }
+            .chart-container {
+                height: 250px;
+            }
+        }
+        
+        /* Landscape phone optimization */
+        @media (max-height: 500px) and (orientation: landscape) {
+            .chart-container {
+                height: 200px;
+            }
+            .slider {
+                height: 100px;
+            }
+            .top-panel {
+                padding: 15px;
+            }
+            .bottom-panel {
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="top-panel">
+            <h1>Waveform - Three Cycles</h1>
+            <div class="chart-container">
+                <canvas id="waveformChart"></canvas>
+            </div>
+        </div>
+        
+        <div class="bottom-panel">
+            <h2>Harmonic Control Panel</h2>
+            
+            <div class="buttons">
+                <button class="btn btn-play" onclick="playTone()">Play Tone</button>
+                <button class="btn btn-stop" onclick="stopTone()">Stop</button>
+                <button class="btn btn-reset" onclick="resetHarmonics()">Reset</button>
+                <button class="btn btn-phase" onclick="scramblePhase()">Scramble Phase</button>
+                <button class="btn btn-phase" onclick="resetPhase()">Reset Phase</button>
+            </div>
+            
+            <div class="controls" id="harmonicControls"></div>
+            
+            <h3>Waveform Presets:</h3>
+            <div class="presets">
+                <button class="btn btn-preset" onclick="setPreset('sine')">Sine</button>
+                <button class="btn btn-preset" onclick="setPreset('sawtooth')">Sawtooth</button>
+                <button class="btn btn-preset" onclick="setPreset('square')">Square</button>
+                <button class="btn btn-preset" onclick="setPreset('triangle')">Triangle</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        const fs = 44100;
+        const f0 = 440;
+        const duration = 0.5;
+        const numHarmonics = 10;
+        const minDb = -60;
+        const maxDb = 0;
+        
+        let harmonicAmps = new Array(numHarmonics).fill(0);
+        let harmonicPhases = new Array(numHarmonics).fill(0);
+        let audioContext;
+        let currentSource;
+        let chart;
+        
+        // Initialize with fundamental only
+        harmonicAmps[0] = 1.0;
+        
+        // Initialize audio context
+        function initAudio() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+        
+        // Generate waveform data for display
+        function generateWaveform() {
+            const cyclesDisplay = 3;
+            const samplesPerCycle = Math.floor(fs / f0);
+            const totalSamples = samplesPerCycle * cyclesDisplay;
+            const waveform = new Array(totalSamples).fill(0);
+            
+            for (let i = 0; i < numHarmonics; i++) {
+                if (harmonicAmps[i] > 0) {
+                    const freq = f0 * (i + 1);
+                    const phaseRad = harmonicPhases[i] * Math.PI / 180;
+                    
+                    for (let j = 0; j < totalSamples; j++) {
+                        const t = j / fs;
+                        waveform[j] += harmonicAmps[i] * Math.sin(2 * Math.PI * freq * t + phaseRad);
+                    }
+                }
+            }
+            
+            // Normalize
+            const maxAmp = Math.max(...waveform.map(Math.abs));
+            if (maxAmp > 0) {
+                for (let i = 0; i < waveform.length; i++) {
+                    waveform[i] /= maxAmp;
+                }
+            }
+            
+            return waveform;
+        }
+        
+        // Generate audio buffer
+        function generateAudioBuffer() {
+            const bufferSize = Math.floor(fs * duration);
+            const buffer = audioContext.createBuffer(1, bufferSize, fs);
+            const data = buffer.getChannelData(0);
+            
+            // Generate composite signal
+            for (let i = 0; i < numHarmonics; i++) {
+                if (harmonicAmps[i] > 0) {
+                    const freq = f0 * (i + 1);
+                    const phaseRad = harmonicPhases[i] * Math.PI / 180;
+                    
+                    for (let j = 0; j < bufferSize; j++) {
+                        const t = j / fs;
+                        data[j] += harmonicAmps[i] * Math.sin(2 * Math.PI * freq * t + phaseRad);
+                    }
+                }
+            }
+            
+            // Normalize
+            const maxAmp = Math.max(...data.map(Math.abs));
+            if (maxAmp > 0) {
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = (data[i] / maxAmp) * 0.8;
+                }
+            }
+            
+            // Apply fade in/out
+            const fadeSize = Math.floor(0.01 * fs);
+            for (let i = 0; i < fadeSize; i++) {
+                data[i] *= i / fadeSize;
+                data[bufferSize - 1 - i] *= i / fadeSize;
+            }
+            
+            return buffer;
+        }
+        
+        // Play tone
+        function playTone() {
+            initAudio();
+            stopTone();
+            
+            const buffer = generateAudioBuffer();
+            currentSource = audioContext.createBufferSource();
+            currentSource.buffer = buffer;
+            currentSource.connect(audioContext.destination);
+            currentSource.start();
+        }
+        
+        // Stop tone
+        function stopTone() {
+            if (currentSource) {
+                currentSource.stop();
+                currentSource = null;
+            }
+        }
+        
+        // Update displays
+        function updateDisplays() {
+            const waveform = generateWaveform();
+            const timeMs = waveform.map((_, i) => (i / fs) * 1000);
+            
+            chart.data.labels = timeMs;
+            chart.data.datasets[0].data = waveform;
+            chart.update('none');
+            
+            // Update value displays
+            for (let i = 0; i < numHarmonics; i++) {
+                const valueEl = document.getElementById(`value-${i}`);
+                const phaseEl = document.getElementById(`phase-${i}`);
+                
+                if (harmonicAmps[i] > 0) {
+                    const db = 20 * Math.log10(harmonicAmps[i]);
+                    valueEl.innerHTML = `${db.toFixed(1)}dB<br>(${harmonicAmps[i].toFixed(2)})`;
+                } else {
+                    valueEl.innerHTML = `-∞dB<br>(0.00)`;
+                }
+                
+                phaseEl.textContent = `φ: ${Math.round(harmonicPhases[i])}°`;
+            }
+        }
+        
+        // Slider callback
+        function sliderChanged(harmonicIndex, value) {
+            const dbValue = parseFloat(value);
+            
+            if (dbValue <= minDb + 0.1) {
+                harmonicAmps[harmonicIndex] = 0;
+            } else {
+                harmonicAmps[harmonicIndex] = Math.pow(10, dbValue / 20);
+            }
+            
+            updateDisplays();
+        }
+        
+        // Reset harmonics
+        function resetHarmonics() {
+            harmonicAmps.fill(0);
+            harmonicAmps[0] = 1.0;
+            harmonicPhases.fill(0);
+            
+            // Reset sliders
+            for (let i = 0; i < numHarmonics; i++) {
+                const slider = document.getElementById(`slider-${i}`);
+                if (i === 0) {
+                    slider.value = 0; // 0 dB for fundamental
+                } else {
+                    slider.value = minDb;
+                }
+            }
+            
+            updateDisplays();
+        }
+        
+        // Scramble phase
+        function scramblePhase() {
+            for (let i = 0; i < numHarmonics; i++) {
+                harmonicPhases[i] = Math.random() * 360;
+            }
+            updateDisplays();
+        }
+        
+        // Reset phase
+        function resetPhase() {
+            harmonicPhases.fill(0);
+            updateDisplays();
+        }
+        
+        // Set preset
+        function setPreset(type) {
+            harmonicAmps.fill(0);
+            harmonicPhases.fill(0);
+            
+            switch (type) {
+                case 'sine':
+                    harmonicAmps[0] = 1.0;
+                    break;
+                case 'sawtooth':
+                    for (let i = 0; i < numHarmonics; i++) {
+                        harmonicAmps[i] = 1 / (i + 1);
+                    }
+                    break;
+                case 'square':
+                    for (let i = 0; i < numHarmonics; i += 2) {
+                        harmonicAmps[i] = 1 / (i + 1);
+                    }
+                    break;
+                case 'triangle':
+                    for (let i = 0; i < numHarmonics; i += 2) {
+                        harmonicAmps[i] = 1 / Math.pow(i + 1, 2);
+                    }
+                    break;
+            }
+            
+            // Update sliders
+            for (let i = 0; i < numHarmonics; i++) {
+                const slider = document.getElementById(`slider-${i}`);
+                if (harmonicAmps[i] > 0) {
+                    slider.value = 20 * Math.log10(harmonicAmps[i]);
+                } else {
+                    slider.value = minDb;
+                }
+            }
+            
+            updateDisplays();
+        }
+        
+        // Initialize
+        window.addEventListener('load', function() {
+            // Create harmonic controls
+            const controlsDiv = document.getElementById('harmonicControls');
+            
+            for (let i = 0; i < numHarmonics; i++) {
+                const controlDiv = document.createElement('div');
+                controlDiv.className = 'harmonic-control';
+                
+                const initialDb = (i === 0) ? 0 : minDb;
+                
+                controlDiv.innerHTML = `
+                    <div class="harmonic-label">H${i + 1}</div>
+                    <div class="freq-label">${Math.round(f0 * (i + 1))}Hz</div>
+                    <input type="range" class="slider" id="slider-${i}" 
+                           min="${minDb}" max="${maxDb}" value="${initialDb}" step="0.1"
+                           orient="vertical"
+                           oninput="sliderChanged(${i}, this.value)">
+                    <div class="value-display" id="value-${i}"></div>
+                    <div class="phase-display" id="phase-${i}"></div>
+                `;
+                
+                controlsDiv.appendChild(controlDiv);
+            }
+            
+            // Initialize chart
+            const ctx = document.getElementById('waveformChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Amplitude',
+                        data: [],
+                        borderColor: 'blue',
+                        borderWidth: 3,
+                        fill: false,
+                        pointRadius: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Time (ms)'
+                            },
+                            ticks: {
+                                maxTicksLimit: 8,
+                                callback: function(value, index, values) {
+                                    return value.toFixed(1);
+                                }
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Amplitude'
+                            },
+                            min: -1.5,
+                            max: 1.5
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    animation: {
+                        duration: 0
+                    }
+                }
+            });
+            
+            updateDisplays();
+        });
+    </script>
+</body>
+</html>
