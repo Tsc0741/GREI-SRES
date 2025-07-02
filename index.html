@@ -360,29 +360,37 @@
         
         // Initialize audio context with iOS compatibility
         function initAudio() {
-            if (!audioContext) {
-                try {
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    
-                    if (isIOS && !audioInitialized) {
-                        document.getElementById('audioNotice').style.display = 'block';
+            return new Promise((resolve, reject) => {
+                if (!audioContext) {
+                    try {
+                        // Use webkitAudioContext for older iOS devices
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        console.log('AudioContext created, state:', audioContext.state);
+                    } catch (error) {
+                        console.error('Failed to create AudioContext:', error);
+                        reject(error);
+                        return;
                     }
-                    
-                    // Resume context if suspended (iOS requirement)
-                    if (audioContext.state === 'suspended') {
-                        audioContext.resume().then(() => {
-                            audioInitialized = true;
-                            document.getElementById('audioNotice').style.display = 'none';
-                        });
-                    } else {
+                }
+                
+                // Always try to resume on iOS, even if state seems running
+                if (audioContext.state === 'suspended' || isIOS) {
+                    console.log('Attempting to resume AudioContext...');
+                    audioContext.resume().then(() => {
+                        console.log('AudioContext resumed, state:', audioContext.state);
                         audioInitialized = true;
                         document.getElementById('audioNotice').style.display = 'none';
-                    }
-                } catch (error) {
-                    console.error('Audio initialization failed:', error);
-                    alert('Audio not supported on this device');
+                        resolve();
+                    }).catch((error) => {
+                        console.error('Failed to resume AudioContext:', error);
+                        reject(error);
+                    });
+                } else {
+                    audioInitialized = true;
+                    document.getElementById('audioNotice').style.display = 'none';
+                    resolve();
                 }
-            }
+            });
         }
         
         // Generate waveform data for display
@@ -453,45 +461,97 @@
         }
         
         // Play tone with iOS compatibility
-        function playTone() {
-            initAudio();
-            
-            if (!audioContext) {
-                alert('Audio not available');
-                return;
-            }
-            
-            // Resume context if needed (iOS)
-            if (audioContext.state === 'suspended') {
-                audioContext.resume().then(() => {
-                    playAudio();
-                });
-            } else {
-                playAudio();
+        async function playTone() {
+            try {
+                console.log('Play tone clicked');
+                
+                // Show loading state
+                const playBtn = document.querySelector('.btn-play');
+                const originalText = playBtn.textContent;
+                playBtn.textContent = 'Loading...';
+                playBtn.disabled = true;
+                
+                await initAudio();
+                
+                if (!audioContext) {
+                    throw new Error('AudioContext not available');
+                }
+                
+                console.log('AudioContext state before play:', audioContext.state);
+                
+                // Force another resume attempt for iOS
+                if (audioContext.state !== 'running') {
+                    await audioContext.resume();
+                    console.log('AudioContext state after resume:', audioContext.state);
+                }
+                
+                // Small delay to ensure context is fully running
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                await playAudio();
+                
+                playBtn.textContent = originalText;
+                playBtn.disabled = false;
+                
+            } catch (error) {
+                console.error('Play tone failed:', error);
+                
+                const playBtn = document.querySelector('.btn-play');
+                playBtn.textContent = 'Play Tone';
+                playBtn.disabled = false;
+                
+                // Show user-friendly error
+                if (isIOS) {
+                    alert('Audio failed to start. Please ensure your device is not on silent mode and try again.');
+                } else {
+                    alert('Audio playback failed: ' + error.message);
+                }
             }
         }
         
-        function playAudio() {
-            try {
-                stopTone();
-                
-                const buffer = generateAudioBuffer();
-                currentSource = audioContext.createBufferSource();
-                currentSource.buffer = buffer;
-                
-                // Add gain node for volume control
-                const gainNode = audioContext.createGain();
-                gainNode.gain.value = 0.5;
-                
-                currentSource.connect(gainNode);
-                gainNode.connect(audioContext.destination);
-                currentSource.start();
-                
-                audioInitialized = true;
-                document.getElementById('audioNotice').style.display = 'none';
-            } catch (error) {
-                console.error('Playback failed:', error);
-            }
+        async function playAudio() {
+            return new Promise((resolve, reject) => {
+                try {
+                    stopTone();
+                    
+                    const buffer = generateAudioBuffer();
+                    currentSource = audioContext.createBufferSource();
+                    currentSource.buffer = buffer;
+                    
+                    // Add gain node for volume control
+                    const gainNode = audioContext.createGain();
+                    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                    gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.01); // Fade in
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime + duration - 0.01);
+                    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + duration); // Fade out
+                    
+                    currentSource.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    
+                    // Handle playback completion
+                    currentSource.onended = () => {
+                        console.log('Audio playback completed');
+                        currentSource = null;
+                        resolve();
+                    };
+                    
+                    currentSource.onerror = (error) => {
+                        console.error('Audio playback error:', error);
+                        currentSource = null;
+                        reject(error);
+                    };
+                    
+                    console.log('Starting audio playback...');
+                    currentSource.start(0);
+                    
+                    audioInitialized = true;
+                    document.getElementById('audioNotice').style.display = 'none';
+                    
+                } catch (error) {
+                    console.error('PlayAudio failed:', error);
+                    reject(error);
+                }
+            });
         }
         
         // Stop tone
